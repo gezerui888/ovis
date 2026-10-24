@@ -81,6 +81,8 @@ namespace Ovis
         private void Render()
         {
             SuspendLayout();
+            // Enter presses Install only on the screen that shows it
+            AcceptButton = null;
             body.Controls.Clear();
             switch (model.Phase)
             {
@@ -103,7 +105,7 @@ namespace Ovis
                     logBox.Text = model.LogText;
                     body.Controls.Add(logBox);
                     body.Controls.Add(Buttons(
-                        Primary(Lang.L("Try again", "다시 시도"), () => model.Install()),
+                        Primary(Lang.L("Try again", "다시 시도"), () => (model.Retry ?? model.Install)()),
                         Button(Lang.L("Copy the log", "오류 내용 복사"), () => { Clipboard.SetText(model.LogText.Length == 0 ? " " : model.LogText); return Task.CompletedTask; }),
                         Button(Lang.L("Get help", "도움 받기"), () => Open(Links.Support))));
                     break;

@@ -59,6 +59,7 @@ jobs:
           "OVIS_START_AUMID=$($package.PackageFamilyName)!OvisStart" >> $env:GITHUB_ENV
       - name: Git missing (exe)
         if: matrix.mode == 'exe'
+        timeout-minutes: 5
         run: |
           $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           $user = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -73,6 +74,7 @@ jobs:
             [Environment]::SetEnvironmentVariable('Path', $user, 'User')
           }
       - name: Install, QR, login start, Restart, Remove
+        timeout-minutes: 30
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File app/windows/qa/ui-qa.ps1 -Mode ${{ matrix.mode }} -Evidence "$env:RUNNER_TEMP\evidence"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

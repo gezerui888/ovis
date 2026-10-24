@@ -50,6 +50,9 @@ namespace Ovis
         public bool GitMissing { get; private set; }
         public bool CanUseWinget { get; private set; }
 
+        /// <summary>The action that failed, for Try again.</summary>
+        public Func<Task> Retry { get; private set; }
+
         public event Action Changed;
         public event Action<string> LineAdded;
 
@@ -76,6 +79,7 @@ namespace Ovis
 
         public async Task Install()
         {
+            Retry = Install;
             ClearLog();
             Paths.RefreshPath();
             if (Paths.Which("git") == null)
@@ -110,6 +114,7 @@ namespace Ovis
         /// <summary>Git for Windows, which install.ps1 needs, from winget (Windows asks for administrator approval).</summary>
         public async Task InstallGit()
         {
+            Retry = InstallGit;
             ClearLog();
             Set(Phase.Working, Lang.L("Installing Git for Windows…", "Git for Windows를 설치하는 중…"));
             var result = await Run.Program("winget", new[] { "install", "--id", "Git.Git", "--exact", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements" }, Append);
@@ -126,12 +131,14 @@ namespace Ovis
 
         public async Task Restart()
         {
+            Retry = Restart;
             ClearLog();
             Set(Phase.Working, Lang.L("Restarting…", "다시 시작하는 중…"));
             if (plugin != null && await HerdrRunning())
             {
-                // the actions' output is in the log already: a failure only names which one stopped
-                if ((await Run.Program("herdr", new[] { "plugin", "action", "invoke", plugin.Id + ".stop-windows" }, Append)).Status != 0)
+                // herdr only queues an action: the start waits until the stop has let the port go, or it would
+                // find the old server answering and leave nothing running once that one exits
+                if (!await Stop(plugin))
                 {
                     Fail(Lang.L("Could not stop the Ovis server.", "Ovis 서버를 멈추지 못했습니다."));
                     return;
@@ -164,6 +171,7 @@ namespace Ovis
         public async Task MakePhoneAddress()
         {
             if (plugin == null) return;
+            Retry = MakePhoneAddress;
             ClearLog();
             Set(Phase.Working, Lang.L("Making the phone address…", "휴대폰 주소를 만드는 중…"));
             await Run.Program("bun", new[] { PluginScript(plugin), "phone" }, Append);
@@ -176,13 +184,23 @@ namespace Ovis
         /// </summary>
         public async Task Remove()
         {
+            Retry = Remove;
             ClearLog();
             Set(Phase.Working, Lang.L("Removing…", "제거하는 중…"));
             var phoneUrl = Status == null ? null : Status.PhoneUrl;
             if (plugin != null)
             {
-                await Run.Program("herdr", new[] { "plugin", "action", "invoke", plugin.Id + ".stop-windows" }, Append);
-                await Run.Program("herdr", new[] { "plugin", "uninstall", plugin.Id }, Append);
+                // removed with its server up, the checkout would go on serving from a deleted folder
+                if (await HerdrRunning() && !await Stop(plugin))
+                {
+                    Fail(Lang.L("Could not stop the Ovis server, so nothing was removed.", "Ovis 서버를 멈추지 못해 아무것도 제거하지 않았습니다."));
+                    return;
+                }
+                if ((await Run.Program("herdr", new[] { "plugin", "uninstall", plugin.Id }, Append)).Status != 0)
+                {
+                    Fail(Lang.L("herdr could not remove the Ovis server.", "herdr가 Ovis 서버를 제거하지 못했습니다."));
+                    return;
+                }
             }
             var tailscale = Paths.Tailscale;
             Uri url;
@@ -199,6 +217,18 @@ namespace Ovis
                 Append(exception.Message);
             }
             await Refresh();
+        }
+
+        /// <summary>Queues the plugin's stop and waits up to a minute for the server to be down.</summary>
+        private async Task<bool> Stop(Plugin plugin)
+        {
+            if ((await Run.Program("herdr", new[] { "plugin", "action", "invoke", plugin.Id + ".stop-windows" }, Append)).Status != 0) return false;
+            for (var attempt = 0; attempt < 30; attempt++)
+            {
+                if (!(await ReadStatus(plugin)).Running) return true;
+                await Task.Delay(2000);
+            }
+            return false;
         }
 
         private static string[] PowerShell(string command)
@@ -222,7 +252,10 @@ namespace Ovis
             try
             {
                 var json = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(result.Output);
-                var plugins = ((Dictionary<string, object>)json["result"])["plugins"] as System.Collections.ArrayList;
+                object answer, list;
+                var plugins = json != null && json.TryGetValue("result", out answer) && answer is Dictionary<string, object> && ((Dictionary<string, object>)answer).TryGetValue("plugins", out list)
+                    ? list as System.Collections.ArrayList
+                    : null;
                 if (plugins == null) return null;
                 var listed = plugins.OfType<Dictionary<string, object>>().ToList();
                 foreach (var id in new[] { Links.PluginId, Links.LegacyPluginId })
@@ -254,10 +287,11 @@ namespace Ovis
                 {
                     var body = await client.GetStringAsync(status.Origin.TrimEnd('/') + "/api/access");
                     var access = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(body);
-                    var tailscale = access["tailscale"] as Dictionary<string, object>;
+                    object value;
+                    var tailscale = access != null && access.TryGetValue("tailscale", out value) ? value as Dictionary<string, object> : null;
                     if (tailscale != null)
                     {
-                        status.Tailscale = tailscale["state"] as string;
+                        status.Tailscale = tailscale.ContainsKey("state") ? tailscale["state"] as string : null;
                         status.PhoneUrl = tailscale.ContainsKey("serving_url") ? tailscale["serving_url"] as string : null;
                     }
                 }

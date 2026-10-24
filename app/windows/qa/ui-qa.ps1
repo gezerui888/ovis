@@ -32,11 +32,13 @@ function Names($Element) {
 }
 function Wait-For([scriptblock]$Test, [int]$Seconds, [string]$What) {
     $deadline = (Get-Date).AddSeconds($Seconds)
+    $lastError = $null
     do {
-        try { $value = & $Test; if ($value) { return $value } } catch { }
+        try { $value = & $Test; if ($value) { return $value } } catch { $lastError = $_ }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     Shot "timeout"
+    if ($lastError) { Log "LAST ERROR: $lastError" }
     $w = Window
     if ($w) { Log ("WINDOW TEXT: " + ((Names $w) -join ' | ')) }
     throw "Timed out after $Seconds s: $What"
@@ -47,13 +49,18 @@ function Find-Text([string]$Text) {
     $w.FindAll($tree::Descendants, [Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -like "*$Text*" } | Select-Object -First 1
 }
 function Click([string]$Name, $Within = $null) {
-    if (-not $Within) { $Within = Window }
-    $byName = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name)
     $button = Wait-For {
-        @($Within.FindAll($tree::Descendants, $byName)) | Where-Object { $_.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' } | Select-Object -First 1
+        $scope = if ($Within) { $Within } else { Window }
+        if (-not $scope) { return $null }
+        foreach ($element in $scope.FindAll($tree::Descendants, [Windows.Automation.Condition]::TrueCondition)) {
+            if ($element.Current.Name -ne $Name) { continue }
+            $pattern = $null
+            if ($element.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { return $pattern }
+        }
+        $null
     } 30 "button '$Name'"
     Log "CLICK '$Name'"
-    $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $button.Invoke()
 }
 $env:PATH = "$env:USERPROFILE\.bun\bin;$env:LOCALAPPDATA\Programs\Herdr\bin;$env:PATH"
 function Herdr-Server { Get-CimInstance Win32_Process -Filter "Name = 'herdr.exe'" | Where-Object { $_.CommandLine -match '\sserver\b' } }
@@ -72,16 +79,40 @@ function Package-Of([int]$ProcessId) {
     if ($code -eq 15700) { 'NO PACKAGE' } elseif ($code -eq 0) { $name.ToString() } else { "error $code" }
 }
 
+# Any window a download's first run raises (SmartScreen, the Open File security warning): its text and a
+# screenshot go in the log, then it is answered the way a user answers it.
+function Answer-Prompts {
+    foreach ($top in $root.FindAll($tree::Children, [Windows.Automation.Condition]::TrueCondition)) {
+        $name = $top.Current.Name
+        if ($name -eq 'Ovis' -or $name -eq 'Taskbar' -or $name -eq 'Program Manager' -or $top.Current.ClassName -eq 'ConsoleWindowClass' -or $top.Current.ClassName -eq 'CASCADIA_HOSTING_WINDOW_CLASS') { continue }
+        $names = @(Names $top)
+        $buttons = @('More info', 'Run anyway', 'Run', '실행', '추가 정보') | Where-Object { $names -contains $_ }
+        if (-not $buttons) { continue }
+        Log "PROMPT window '$name' class $($top.Current.ClassName): $($names -join ' | ')"
+        Shot 'prompt'
+        $pick = @('Run anyway', 'More info', 'Run', '실행', '추가 정보') | Where-Object { $buttons -contains $_ } | Select-Object -First 1
+        Click $pick $top
+        Start-Sleep -Seconds 2
+        return $true
+    }
+    $false
+}
 function Launch {
     if ($Mode -eq 'exe') {
-        # as a download: Mark of the Web, opened through the shell like a double-click
-        Log "LAUNCH $env:OVIS_EXE (Zone.Identifier: $((Get-Content -Raw -Path $env:OVIS_EXE -Stream Zone.Identifier) -replace "`r?`n", ' '))"
-        Start-Process -FilePath $env:OVIS_EXE
+        # as a download: Mark of the Web, opened by Explorer like a double-click
+        Log "LAUNCH $env:OVIS_EXE (Zone.Identifier: $((Get-Content -Raw -Path $env:OVIS_EXE -Stream Zone.Identifier -ErrorAction SilentlyContinue) -replace "`r?`n", ' '))"
+        Start-Process explorer.exe -ArgumentList ('"{0}"' -f $env:OVIS_EXE)
     } else {
         Log "LAUNCH shell:AppsFolder\$env:OVIS_AUMID"
         Start-Process explorer.exe "shell:AppsFolder\$env:OVIS_AUMID"
     }
-    Wait-For { Window } 60 'the Ovis window' | Out-Null
+    $deadline = (Get-Date).AddSeconds(90)
+    $prompted = $false
+    while (-not (Window) -and (Get-Date) -lt $deadline) {
+        if (Answer-Prompts) { $prompted = $true } else { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not (Window)) { Shot 'no-window'; throw 'Ovis did not open within 90 s' }
+    if (-not $prompted) { Log 'PROMPT none: no SmartScreen or security warning appeared before the window' }
     Start-Sleep -Seconds 2
     $p = Get-Process Ovis -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($p) { Log "Ovis.exe pid $($p.Id) package: $(Package-Of $p.Id)" }
