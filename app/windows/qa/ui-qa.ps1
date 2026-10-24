@@ -226,9 +226,11 @@ Shot 'restarted'
 Log "Ovis server pid after Restart: $serverAfter (was $serverBefore); herdr server pid before $before, after $((Herdr-Server | Select-Object -First 1).ProcessId)"
 
 Click 'Remove…'
-$dialog = Wait-For { Window 'Remove the Ovis server from this PC?' } 30 'the Remove dialog'
+# the confirmation is a dialog owned by the Ovis window, so it is found under it
+Wait-For { Find-Text 'Remove the Ovis server from this PC?' } 30 'the Remove dialog' | Out-Null
+Log ("REMOVE DIALOG TEXT: " + ((Names (Window)) | Select-Object -First 4) -join ' | ')
 Shot 'remove-confirm'
-Click 'OK' $dialog
+Click 'OK'
 Wait-For { Find-Text 'Set up this PC' } 300 'the remove to finish' | Out-Null
 Shot 'removed'
 $after = Herdr-Server | Select-Object -First 1
