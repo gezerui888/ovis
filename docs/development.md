@@ -534,9 +534,10 @@ The workflow validates metadata, then runs the same unit, integration and browse
 as PRs against the exact `main` commit selected when the run starts. Only after all checks
 pass does it create the tag and GitHub release. A failed validation creates neither. Then it
 attaches the signed Ovis for Mac `Ovis.dmg` to the release, or skips that with a notice while the
-signing secrets are unset ([app/mac/README.md](../app/mac/README.md#releases)); the release becomes
-GitHub's latest only once it has that DMG. A red `mac-dmg` job leaves the release published: run
-**Actions → Mac app** for its tag instead of releasing again.
+signing secrets are unset ([app/mac/README.md](../app/mac/README.md#releases)), and Ovis for Windows'
+`Ovis.exe` ([app/windows/README.md](../app/windows/README.md#releases)); the release becomes GitHub's
+latest only once it has both. A red `mac-dmg` or `windows-app` job leaves the release published: run
+**Actions → Mac app** or **Actions → Windows app** for its tag instead of releasing again.
 Do not push release tags by hand: installed updaters read Git tags directly, so a tag is
 visible to them even without a GitHub release. Existing tags cannot be reused; fix a
 published version with a new patch release. If publishing fails after a tag was created,

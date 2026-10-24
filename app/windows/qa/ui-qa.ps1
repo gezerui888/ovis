@@ -24,7 +24,7 @@ function Shot([string]$Name) {
 $root = [Windows.Automation.AutomationElement]::RootElement
 $tree = [Windows.Automation.TreeScope]
 function Window([string]$Name = 'Ovis') {
-    $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), $Name
+    $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name)
     $root.FindFirst($tree::Children, $condition)
 }
 function Names($Element) {
@@ -48,9 +48,9 @@ function Find-Text([string]$Text) {
 }
 function Click([string]$Name, $Within = $null) {
     if (-not $Within) { $Within = Window }
-    $condition = New-Object Windows.Automation.AndCondition @(
-        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), $Name),
-        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), [Windows.Automation.ControlType]::Button))
+    $condition = [Windows.Automation.AndCondition]::new(
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name),
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button))
     $button = Wait-For { $Within.FindFirst($tree::Descendants, $condition) } 30 "button '$Name'"
     Log "CLICK '$Name'"
     $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
