@@ -200,7 +200,10 @@ if ($Mode -eq 'exe') {
     $command = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Ovis).Ovis
     Log "LOGIN START: $command"
     $exe = [regex]::Match($command, '^"([^"]+)"').Groups[1].Value
-    Start-Process -FilePath $exe -ArgumentList '--start' -Wait
+    # -Wait would also wait for the herdr server it leaves running
+    $login = Start-Process -FilePath $exe -ArgumentList '--start' -PassThru
+    if (-not $login.WaitForExit(60000)) { throw 'Ovis.exe --start did not exit within 60 s' }
+    Log "Ovis.exe --start exited with $($login.ExitCode)"
 } else {
     Log "LOGIN START: shell:AppsFolder\$env:OVIS_START_AUMID (the startup task's application)"
     Start-Process explorer.exe "shell:AppsFolder\$env:OVIS_START_AUMID"
