@@ -187,9 +187,13 @@ if ($Mode -eq 'exe') {
 # the login start: herdr stopped, then the login entry run as Windows runs it at sign-in
 Close-Ovis
 Log 'STOP herdr server (as after a reboot)'
-herdr plugin action invoke devswha.ovis.stop-windows 2>&1 | Out-Null
-herdr plugin action invoke devswha.herdr-web-ui.stop-windows 2>&1 | Out-Null
-herdr server stop | Out-Null
+$ErrorActionPreference = 'Continue'
+$pluginId = ((herdr plugin list --json | ConvertFrom-Json).result.plugins | Where-Object { $_.plugin_id -in 'devswha.ovis', 'devswha.herdr-web-ui' } | Select-Object -First 1).plugin_id
+Log "plugin id: $pluginId"
+herdr plugin action invoke "$pluginId.stop-windows" 2>&1 | Out-Null
+Wait-For { -not (Get-NetTCPConnection -LocalPort 7317 -State Listen -ErrorAction SilentlyContinue) } 60 'the Ovis server to stop' | Out-Null
+herdr server stop 2>&1 | Out-Null
+$ErrorActionPreference = 'Stop'
 Wait-For { -not (Herdr-Server) } 30 'herdr to stop' | Out-Null
 Log "herdr running after stop: $([bool](Herdr-Server))"
 if ($Mode -eq 'exe') {
