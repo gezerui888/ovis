@@ -136,8 +136,8 @@ namespace Ovis
             Set(Phase.Working, Lang.L("Restarting…", "다시 시작하는 중…"));
             if (plugin != null && await HerdrRunning())
             {
-                // herdr only queues an action: the start waits until the stop has let the port go, or it would
-                // find the old server answering and leave nothing running once that one exits
+                // the start waits until the old server has exited: started before, it would find that one
+                // answering and leave nothing running once it goes
                 if (!await Stop(plugin))
                 {
                     Fail(Lang.L("Could not stop the Ovis server.", "Ovis 서버를 멈추지 못했습니다."));
@@ -190,8 +190,9 @@ namespace Ovis
             var phoneUrl = Status == null ? null : Status.PhoneUrl;
             if (plugin != null)
             {
-                // removed with its server up, the checkout would go on serving from a deleted folder
-                if (await HerdrRunning() && !await Stop(plugin))
+                // removed with its server up, the checkout would go on serving from a deleted folder; the server
+                // can outlive a herdr that crashed, so it is stopped whether herdr runs or not
+                if (!await Stop(plugin))
                 {
                     Fail(Lang.L("Could not stop the Ovis server, so nothing was removed.", "Ovis 서버를 멈추지 못해 아무것도 제거하지 않았습니다."));
                     return;
@@ -219,16 +220,13 @@ namespace Ovis
             await Refresh();
         }
 
-        /// <summary>Queues the plugin's stop and waits up to a minute for the server to be down.</summary>
+        /// <summary>
+        /// The plugin's own stop, run here rather than queued in herdr (a herdr action only queues): it returns
+        /// once the server and everything under it have exited, and fails when it cannot tell.
+        /// </summary>
         private async Task<bool> Stop(Plugin plugin)
         {
-            if ((await Run.Program("herdr", new[] { "plugin", "action", "invoke", plugin.Id + ".stop-windows" }, Append)).Status != 0) return false;
-            for (var attempt = 0; attempt < 30; attempt++)
-            {
-                if (!(await ReadStatus(plugin)).Running) return true;
-                await Task.Delay(2000);
-            }
-            return false;
+            return (await Run.Program("bun", new[] { PluginScript(plugin), "stop" }, Append)).Status == 0;
         }
 
         private static string[] PowerShell(string command)

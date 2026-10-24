@@ -29,15 +29,15 @@ namespace Ovis
         /// <summary>Runs a program to its end with an empty stdin, so nothing it runs can wait for an answer.</summary>
         public static Task<RunResult> Program(string program, IEnumerable<string> arguments, Action<string> onLine = null, bool keepStderr = true)
         {
-            return Task.Run(() => RunToEnd(CommandLine(program, arguments), onLine, keepStderr));
+            var words = new[] { program }.Concat(arguments).ToArray();
+            return Task.Run(() => RunToEnd(words, onLine, keepStderr));
         }
 
         /// <summary>Starts a program that keeps running (herdr's server), with no window and nothing tied to this app.</summary>
         public static void Detached(string program, IEnumerable<string> arguments)
         {
             // start /b: cmd hands the program its own hidden console and exits, so no cmd lives on beside it
-            var command = "start \"\" /b " + CommandLine(program, arguments);
-            var process = Create("/d /s /c \"" + command + "\"", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            var process = Create("start \"\" /b ", new[] { program }.Concat(arguments).ToArray(), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             process.WaitForExit(10000);
             process.Dispose();
         }
@@ -48,12 +48,7 @@ namespace Ovis
             return "\"" + argument.Replace("\"", "\\\"") + "\"";
         }
 
-        private static string CommandLine(string program, IEnumerable<string> arguments)
-        {
-            return string.Join(" ", new[] { Quote(program) }.Concat(arguments.Select(Quote)));
-        }
-
-        private static RunResult RunToEnd(string command, Action<string> onLine, bool keepStderr)
+        private static RunResult RunToEnd(string[] words, Action<string> onLine, bool keepStderr)
         {
             var lines = new List<string>();
             var security = new SecurityAttributes { Length = Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = 1 };
@@ -66,7 +61,7 @@ namespace Ovis
             ChildProcess process;
             try
             {
-                process = Create("/d /s /c \"" + command + "\"", input, write, error);
+                process = Create("", words, input, write, error);
             }
             catch (Win32Exception exception)
             {
@@ -135,6 +130,39 @@ namespace Ovis
             {
                 if (Handle != IntPtr.Zero) CloseHandle(Handle);
                 Handle = IntPtr.Zero;
+            }
+        }
+
+        private static readonly object CreateLock = new object();
+        private static int created;
+
+        /// <summary>
+        /// cmd runs the words, each handed over in an environment variable of this child only and named in the
+        /// command line: cmd expands %NAME% once and never again inside what it put there, so a path with %, !,
+        /// & or ^ in it arrives as written (scripts/plugin.ps1 does the same). /v:off keeps ! literal.
+        /// </summary>
+        private static ChildProcess Create(string prefix, string[] words, IntPtr input, IntPtr output, IntPtr error)
+        {
+            lock (CreateLock)
+            {
+                var names = new List<string>();
+                try
+                {
+                    var id = ++created;
+                    for (var i = 0; i < words.Length; i++)
+                    {
+                        var name = "OVIS_RUN_" + id + "_" + i;
+                        Environment.SetEnvironmentVariable(name, words[i]);
+                        names.Add(name);
+                    }
+                    var command = prefix + string.Join(" ", names.Select(name => "\"%" + name + "%\""));
+                    return Create("/d /v:off /s /c \"" + command + "\"", input, output, error);
+                }
+                finally
+                {
+                    // the child has its own copy of the environment by now
+                    foreach (var name in names) Environment.SetEnvironmentVariable(name, null);
+                }
             }
         }
 

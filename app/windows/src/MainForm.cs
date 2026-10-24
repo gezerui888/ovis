@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -63,6 +64,7 @@ namespace Ovis
         }
 
         private const int ContentWidth = 520;
+        private Font boldFont;
 
         private Control Header()
         {
@@ -83,7 +85,10 @@ namespace Ovis
             SuspendLayout();
             // Enter presses Install only on the screen that shows it
             AcceptButton = null;
+            // a cleared control keeps its window handle until disposed: each Check again would leak them
+            var replaced = body.Controls.Cast<Control>().Where(control => control != logBox).ToList();
             body.Controls.Clear();
+            foreach (var control in replaced) DisposeTree(control);
             switch (model.Phase)
             {
                 case Phase.Checking:
@@ -186,7 +191,7 @@ namespace Ovis
                 words.Controls.Add(Paragraph(Lang.L(
                     "Open Ovis on your phone, tap Scan QR code, and point it here. Your phone needs Tailscale, signed in to the same account.",
                     "휴대폰에서 Ovis를 열고 Scan QR code를 눌러 이 화면을 찍으세요. 휴대폰에도 같은 계정으로 로그인한 Tailscale이 있어야 합니다."), 300));
-                var url = new TextBox { Text = status.PhoneUrl, ReadOnly = true, BorderStyle = BorderStyle.None, Width = 300, BackColor = SystemColors.Window, ForeColor = SystemColors.GrayText, Font = new Font("Consolas", 8.5F), AccessibleName = "Phone address" };
+                var url = new TextBox { Text = status.PhoneUrl, ReadOnly = true, BorderStyle = BorderStyle.None, Width = 300, BackColor = SystemColors.Window, ForeColor = SystemColors.GrayText, Font = MonoFont, AccessibleName = "Phone address" };
                 words.Controls.Add(url);
                 row.Controls.Add(words);
                 body.Controls.Add(row);
@@ -222,9 +227,20 @@ namespace Ovis
             return Task.CompletedTask;
         }
 
+        private static readonly Font HeadingFont = new Font("Segoe UI Semibold", 11F);
+        private static readonly Font MonoFont = new Font("Consolas", 8.5F);
+
+        private static void DisposeTree(Control control)
+        {
+            foreach (var child in control.Controls.Cast<Control>().ToList()) DisposeTree(child);
+            var picture = control as PictureBox;
+            if (picture != null && picture.Image != null) picture.Image.Dispose();
+            control.Dispose();
+        }
+
         private static Label Heading(string text)
         {
-            return new Label { Text = text, Font = new Font("Segoe UI Semibold", 11F), AutoSize = true, MaximumSize = new Size(ContentWidth, 0), Margin = new Padding(0, 0, 0, 6) };
+            return new Label { Text = text, Font = HeadingFont, AutoSize = true, MaximumSize = new Size(ContentWidth, 0), Margin = new Padding(0, 0, 0, 6) };
         }
 
         private static Label Paragraph(string text, int width = ContentWidth)
@@ -242,7 +258,7 @@ namespace Ovis
         private Button Primary(string text, Func<Task> action)
         {
             var button = Button(text, action);
-            button.Font = new Font(Font, FontStyle.Bold);
+            button.Font = boldFont ?? (boldFont = new Font(Font, FontStyle.Bold));
             return button;
         }
 
