@@ -8,9 +8,10 @@ $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
 $logFile = Join-Path $Evidence "$Mode-actions.log"
-function Log([string]$Line) { $stamp = (Get-Date).ToString('HH:mm:ss'); "$stamp $Line" | Tee-Object -FilePath $logFile -Append | Write-Host }
+function Log([string]$Line) { $stamp = (Get-Date).ToString('HH:mm:ss'); "$stamp $Line" | Tee-Object -Variable line | Write-Host; [IO.File]::AppendAllText($logFile, $line + "`n", [Text.UTF8Encoding]::new($false)) }
 $shot = 0
 function Shot([string]$Name) {
+    if (Get-Command Front -ErrorAction SilentlyContinue) { try { Front (Window) } catch { } }
     $script:shot++
     $bounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
     $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -48,19 +49,49 @@ function Find-Text([string]$Text) {
     if (-not $w) { return $null }
     $w.FindAll($tree::Descendants, [Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -like "*$Text*" } | Select-Object -First 1
 }
+if (-not ('Qa.Mouse' -as [type])) {
+    Add-Type -Namespace Qa -Name Mouse -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+[DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+'@
+    [void][Qa.Mouse]::SetProcessDPIAware()
+}
+# Ovis in front of the runner's console: a screenshot shows it, and a mouse click lands on it
+function Front($Element) {
+    if (-not $Element) { $Element = Window }
+    if (-not $Element) { return }
+    $handle = [IntPtr]$Element.Current.NativeWindowHandle
+    if ($handle -eq [IntPtr]::Zero) { return }
+    [Qa.Mouse]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [Qa.Mouse]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+    [void][Qa.Mouse]::ShowWindow($handle, 9)
+    [void][Qa.Mouse]::SetForegroundWindow($handle)
+    Start-Sleep -Milliseconds 300
+}
 function Click([string]$Name, $Within = $null) {
-    $button = Wait-For {
+    $element = Wait-For {
         $scope = if ($Within) { $Within } else { Window }
         if (-not $scope) { return $null }
-        foreach ($element in $scope.FindAll($tree::Descendants, [Windows.Automation.Condition]::TrueCondition)) {
-            if ($element.Current.Name -ne $Name) { continue }
-            $pattern = $null
-            if ($element.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { return $pattern }
-        }
-        $null
+        $matches = @($scope.FindAll($tree::Descendants, [Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -eq $Name })
+        ($matches | Where-Object { $_.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' } | Select-Object -First 1), ($matches | Select-Object -First 1) | Where-Object { $_ } | Select-Object -First 1
     } 30 "button '$Name'"
-    Log "CLICK '$Name'"
-    $button.Invoke()
+    $patterns = ($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName }) -join ','
+    $pattern = $null
+    if ($element.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        Log "CLICK '$Name' (invoke; $($element.Current.ControlType.ProgrammaticName); $patterns)"
+        $pattern.Invoke()
+        return
+    }
+    Front $(if ($Within) { $Within } else { Window })
+    $box = $element.Current.BoundingRectangle
+    $x = [int]($box.X + $box.Width / 2); $y = [int]($box.Y + $box.Height / 2)
+    Log "CLICK '$Name' (mouse at $x,$y; $($element.Current.ControlType.ProgrammaticName); $patterns)"
+    [void][Qa.Mouse]::SetCursorPos($x, $y)
+    [Qa.Mouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [Qa.Mouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
 }
 $env:PATH = "$env:USERPROFILE\.bun\bin;$env:LOCALAPPDATA\Programs\Herdr\bin;$env:PATH"
 function Herdr-Server { Get-CimInstance Win32_Process -Filter "Name = 'herdr.exe'" | Where-Object { $_.CommandLine -match '\sserver\b' } }
