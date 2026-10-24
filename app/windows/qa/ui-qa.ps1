@@ -1,4 +1,4 @@
-# TEMPORARY QA (not for the PR): drives Ovis.exe through UI Automation on a GitHub windows runner.
+﻿# TEMPORARY QA (not for the PR): drives Ovis.exe through UI Automation on a GitHub windows runner.
 param(
     [Parameter(Mandatory)][string]$Mode, # exe | msix
     [Parameter(Mandatory)][string]$Evidence
@@ -215,12 +215,15 @@ Launch
 Wait-For { Find-Text 'Running on this PC' } 120 'the running screen' | Out-Null
 Shot 'running-after-login-start'
 $before = (Herdr-Server | Select-Object -First 1).ProcessId
+function Ovis-Server { (Get-NetTCPConnection -LocalPort 7317 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess }
+$serverBefore = Ovis-Server
+Log "Ovis server pid before Restart: $serverBefore"
 Click 'Restart'
 Start-Sleep -Seconds 1
 Shot 'restarting'
-Wait-For { Find-Text 'Running on this PC' } 300 'the restart to finish' | Out-Null
+$serverAfter = Wait-For { $p = Ovis-Server; if ($p -and $p -ne $serverBefore -and (Find-Text 'Running on this PC') -and -not (Find-Text 'Restarting')) { $p } } 300 'the Ovis server to come back as a new process'
 Shot 'restarted'
-Log "herdr server pid before restart $before, after $((Herdr-Server | Select-Object -First 1).ProcessId)"
+Log "Ovis server pid after Restart: $serverAfter (was $serverBefore); herdr server pid before $before, after $((Herdr-Server | Select-Object -First 1).ProcessId)"
 
 Click 'Remove…'
 $dialog = Wait-For { Window 'Remove the Ovis server from this PC?' } 30 'the Remove dialog'
