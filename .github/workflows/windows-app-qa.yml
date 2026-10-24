@@ -1,0 +1,88 @@
+name: Windows app QA (temporary)
+on:
+  push:
+    branches: [feat/windows-setup-app]
+permissions:
+  contents: read
+jobs:
+  qa:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [exe, msix]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File app/windows/build.ps1 -Version 0.0.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem app/windows/build | Format-Table Name, Length
+      - name: Screen and Defender state
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          "screen: $([Windows.Forms.Screen]::PrimaryScreen.Bounds)"
+          "session: $([Environment]::UserInteractive) user $env:USERNAME"
+          Get-MpComputerStatus | Select-Object AMServiceEnabled, RealTimeProtectionEnabled, AntivirusEnabled | Format-List
+          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -ErrorAction SilentlyContinue | Format-List
+          (Get-Command git).Source; (Get-Command winget -ErrorAction SilentlyContinue).Source
+          "herdr: $([bool](Get-Command herdr -ErrorAction SilentlyContinue)) bun: $([bool](Get-Command bun -ErrorAction SilentlyContinue))"
+      - name: Defender scan of the exe
+        run: |
+          & "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "$env:GITHUB_WORKSPACE\app\windows\build\Ovis.exe" -DisableRemediation
+          "exit $LASTEXITCODE"
+          exit 0
+      - name: Prepare the download (exe)
+        if: matrix.mode == 'exe'
+        run: |
+          $download = "$env:USERPROFILE\Downloads\Ovis.exe"
+          New-Item -ItemType Directory -Force -Path (Split-Path $download) | Out-Null
+          Copy-Item app/windows/build/Ovis.exe $download
+          Set-Content -Path $download -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=https://github.com/devswha/ovis/releases/latest/download/Ovis.exe"
+          "OVIS_EXE=$download" >> $env:GITHUB_ENV
+      - name: Install the package (msix)
+        if: matrix.mode == 'msix'
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Ovis Local' -CertStoreLocation Cert:\CurrentUser\My -KeyUsage DigitalSignature -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          Export-Certificate -Cert $cert -FilePath "$env:RUNNER_TEMP\ovis.cer" | Out-Null
+          Import-Certificate -FilePath "$env:RUNNER_TEMP\ovis.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint app/windows/build/Ovis.msix
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Add-AppxPackage -Path app/windows/build/Ovis.msix
+          $package = Get-AppxPackage -Name Ovis.Local
+          $package | Format-List Name, PackageFullName, PackageFamilyName, InstallLocation, SignatureKind
+          "OVIS_AUMID=$($package.PackageFamilyName)!Ovis" >> $env:GITHUB_ENV
+          "OVIS_START_AUMID=$($package.PackageFamilyName)!OvisStart" >> $env:GITHUB_ENV
+      - name: Git missing (exe)
+        if: matrix.mode == 'exe'
+        run: |
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $strip = { param($p) (($p -split ';') | Where-Object { $_ -and $_ -notmatch '\\Git\\' }) -join ';' }
+          [Environment]::SetEnvironmentVariable('Path', (& $strip $machine), 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', (& $strip $user), 'User')
+          try {
+            $env:QA_GIT_MISSING = '1'
+            powershell -NoProfile -ExecutionPolicy Bypass -File app/windows/qa/ui-qa.ps1 -Mode exe -Evidence "$env:RUNNER_TEMP\evidence"
+          } finally {
+            [Environment]::SetEnvironmentVariable('Path', $machine, 'Machine')
+            [Environment]::SetEnvironmentVariable('Path', $user, 'User')
+          }
+      - name: Install, QR, login start, Restart, Remove
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File app/windows/qa/ui-qa.ps1 -Mode ${{ matrix.mode }} -Evidence "$env:RUNNER_TEMP\evidence"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Logs
+        if: always()
+        run: |
+          if (Get-Command herdr -ErrorAction SilentlyContinue) { herdr plugin log list | Select-Object -Last 40 }
+          Get-ChildItem "$env:APPDATA\herdr", "$env:LOCALAPPDATA\herdr" -Recurse -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { "--- $($_.FullName)"; Get-Content $_.FullName -Tail 30 }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-${{ matrix.mode }}
+          path: ${{ runner.temp }}/evidence

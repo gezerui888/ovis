@@ -55,7 +55,7 @@ jobs:
             has="HAS_$name"; [ "${!has}" = true ] || missing="$missing $name"
           done
           if [ -n "$missing" ]; then
-            echo "::notice title=Ovis.dmg skipped::$RELEASE_TAG gets no Ovis.dmg: these repository secrets are not set:$missing. Set them (app/mac/README.md), then run the Mac app workflow with tag $RELEASE_TAG; it marks the release latest once Ovis.dmg is attached."
+            echo "::notice title=Ovis.dmg skipped::$RELEASE_TAG gets no Ovis.dmg: these repository secrets are not set:$missing. Set them (app/mac/README.md), then run the Mac app workflow with tag $RELEASE_TAG; it marks the release latest once Ovis.dmg and Ovis.exe are attached."
             echo "ready=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -124,10 +124,12 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           gh release upload "$RELEASE_TAG" app/mac/build/Ovis.dmg --clobber
-          # Release publishes without marking it latest, so ovis.sh/Ovis.dmg keeps the previous dmg
-          # until this one is attached; a run for an older tag leaves the newest release latest
+          # Release publishes without marking it latest, so ovis.sh/Ovis.dmg and ovis.sh/Ovis.exe keep the
+          # previous files until this release has both (the Windows app job does the same check); a run
+          # for an older tag leaves the newest release latest
           git fetch --quiet --tags origin
-          if [ "$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)" = "$RELEASE_TAG" ]; then
+          if [ "$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)" = "$RELEASE_TAG" ] &&
+             [ "$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name] | (index("Ovis.dmg") != null and index("Ovis.exe") != null)')" = true ]; then
             gh release edit "$RELEASE_TAG" --latest
           fi
       - name: Remove the keychain and the keys

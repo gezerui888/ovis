@@ -64,6 +64,13 @@ jobs:
             exit 1
           fi
           gh release create "v$RELEASE_VERSION" --target "$GITHUB_SHA" --title "Ovis v$RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --latest=false
+  windows-app:
+    needs: publish
+    uses: ./.github/workflows/windows-app.yml
+    with:
+      tag: v${{ inputs.version }}
+    permissions:
+      contents: write
   mac-dmg:
     needs: publish
     uses: ./.github/workflows/mac-dmg.yml
