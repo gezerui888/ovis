@@ -58,8 +58,6 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 20
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,27 +84,40 @@ jobs:
           $version = if ($env:RELEASE_TAG) { $env:RELEASE_TAG.Substring(1) } else { '0.0.0' }
           powershell -NoProfile -ExecutionPolicy Bypass -File app/windows/build.ps1 -Version $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Keep the build
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
           name: ovis-windows
           path: |
             app/windows/build/Ovis.exe
             app/windows/build/Ovis.msix
           if-no-files-found: error
+  # the only job with a token that can write, and never for a pull request
+  attach:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ vars.CI_SELF_HOSTED_LABELS && fromJSON(vars.CI_SELF_HOSTED_LABELS) || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: ovis-windows
+          path: build
       - name: Attach to the release
-        if: github.event_name != 'pull_request'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
           HAS_STORE_IDENTITY: ${{ vars.OVIS_MSIX_NAME != '' && vars.OVIS_MSIX_PUBLISHER != '' && vars.OVIS_MSIX_PUBLISHER_DISPLAY_NAME != '' }}
         run: |
-          files=(app/windows/build/Ovis.exe)
+          files=(build/Ovis.exe)
           if [ "$HAS_STORE_IDENTITY" = true ]; then
-            files+=(app/windows/build/Ovis.msix)
+            files+=(build/Ovis.msix)
           else
             echo "::notice title=Ovis.msix skipped::$RELEASE_TAG gets Ovis.exe but no Ovis.msix: set the repository variables OVIS_MSIX_NAME, OVIS_MSIX_PUBLISHER and OVIS_MSIX_PUBLISHER_DISPLAY_NAME from Partner Center (app/windows/README.md)."
           fi

@@ -40,7 +40,7 @@ namespace Ovis
     /// </summary>
     internal sealed class Model
     {
-        private readonly SynchronizationContext context = SynchronizationContext.Current;
+        private readonly SynchronizationContext context = SynchronizationContext.Current ?? throw new InvalidOperationException("Model is made on the window's thread, after the form's constructor started.");
         private readonly List<string> log = new List<string>();
         private Plugin plugin;
 

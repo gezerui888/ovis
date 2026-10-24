@@ -8,12 +8,15 @@ namespace Ovis
 {
     internal sealed class MainForm : Form
     {
-        private readonly Model model = new Model();
+        private readonly Model model;
         private readonly FlowLayoutPanel body;
         private readonly TextBox logBox;
 
         public MainForm()
         {
+            // made here, not in a field initializer: the Model keeps the window thread's context, which the
+            // base Form constructor installs
+            model = new Model();
             Text = "Ovis";
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new SizeF(96F, 96F);

@@ -48,10 +48,10 @@ function Find-Text([string]$Text) {
 }
 function Click([string]$Name, $Within = $null) {
     if (-not $Within) { $Within = Window }
-    $condition = [Windows.Automation.AndCondition]::new(
-        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name),
-        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button))
-    $button = Wait-For { $Within.FindFirst($tree::Descendants, $condition) } 30 "button '$Name'"
+    $byName = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name)
+    $button = Wait-For {
+        @($Within.FindAll($tree::Descendants, $byName)) | Where-Object { $_.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' } | Select-Object -First 1
+    } 30 "button '$Name'"
     Log "CLICK '$Name'"
     $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
